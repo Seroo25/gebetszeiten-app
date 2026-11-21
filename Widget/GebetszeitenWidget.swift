@@ -1,13 +1,15 @@
+import AppIntents
 import SwiftUI
 import WidgetKit
 
 // MARK: - Timeline
-// Der große Vorteil gegenüber Scriptable: Alle Wechsel (Mitternacht + jedes Gebet)
-// werden iOS im Voraus übergeben. iOS springt dann minutengenau um – ohne Neuladen.
+// Alle Wechsel (Mitternacht, jedes Gebet) werden iOS im Voraus übergeben.
+// iOS springt dann minutengenau um – ohne Neuladen.
 
 struct PrayerEntry: TimelineEntry {
     let date: Date
     let table: PrayerTable?
+    var dayOffset: Int = 0
 }
 
 struct Provider: TimelineProvider {
@@ -26,15 +28,21 @@ struct Provider: TimelineProvider {
         Task {
             let now = Date()
             guard let table = await PrayerStore.load() else {
-                // keine Daten (offline, nie geladen) → in 15 Min. erneut versuchen
                 let entry = PrayerEntry(date: now, table: nil)
                 completion(Timeline(entries: [entry], policy: .after(now.addingTimeInterval(15 * 60))))
                 return
             }
-            // Einträge für die nächsten 2 Tage
-            let points = [now] + table.changePoints(from: now, days: 2)
-            let entries = points.map { PrayerEntry(date: $0, table: table) }
-            // Daten alle paar Stunden frisch holen (falls die Moschee Zeiten ändert)
+
+            var entries: [PrayerEntry] = []
+            var start = now
+            let offset = DayOffsetStore.current(now: now)
+            if offset != 0 {
+                // anderer Tag ausgewählt → kurz anzeigen, dann automatisch zurück auf heute
+                entries.append(PrayerEntry(date: now, table: table, dayOffset: offset))
+                start = DayOffsetStore.setAt.addingTimeInterval(DayOffsetStore.resetAfter)
+            }
+            let points = [start] + table.changePoints(from: start, days: 2)
+            entries += points.map { PrayerEntry(date: $0, table: table) }
             completion(Timeline(entries: entries, policy: .after(now.addingTimeInterval(4 * 3600))))
         }
     }
@@ -46,24 +54,53 @@ struct WidgetView: View {
     @Environment(\.widgetFamily) private var family
     let entry: PrayerEntry
 
+    private var shownDay: Date { PrayerTable.day(entry.dayOffset, from: entry.date) }
+
     var body: some View {
-        if let table = entry.table, let state = table.state(at: entry.date) {
-            switch family {
-            case .systemSmall: small(state)
-            case .systemLarge: large(state)
-            default: medium(state)
+        Group {
+            if let table = entry.table, let state = table.state(at: entry.date) {
+                switch family {
+                case .systemSmall: small(state)
+                case .systemLarge: large(table, state)
+                default: medium(table, state)
+                }
+            } else {
+                VStack(spacing: 4) {
+                    Text("Gebetszeiten")
+                        .font(.system(size: 15, weight: .semibold, design: .rounded))
+                    Text("Daten gerade nicht erreichbar")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(Glass.sub)
+                }
+                .foregroundStyle(Glass.text)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .containerBackground(for: .widget) { Color.black.opacity(0.18) }
             }
-        } else {
-            VStack(spacing: 4) {
-                Text("Gebetszeiten")
-                    .font(.system(size: 15, weight: .semibold, design: .rounded))
-                Text("Daten gerade nicht erreichbar")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(Glass.sub)
+        }
+        .environment(\.locale, Locale(identifier: "de_DE"))
+    }
+
+    /// Kopfzeile mit Pfeilen; Tippen auf das Datum springt zurück auf heute
+    private func header(_ table: PrayerTable, dateSize: CGFloat, hijriSize: CGFloat, arrow: CGFloat) -> some View {
+        DateHeader(
+            title: DateText.header(shownDay),
+            subtitle: table.hijriLine(for: shownDay, now: entry.date),
+            dateSize: dateSize, hijriSize: hijriSize,
+            leading: {
+                Button(intent: ChangeDayIntent(delta: -1)) { ArrowLabel(forward: false, size: arrow) }
+                    .buttonStyle(.plain)
+            },
+            trailing: {
+                Button(intent: ChangeDayIntent(delta: 1)) { ArrowLabel(forward: true, size: arrow) }
+                    .buttonStyle(.plain)
             }
-            .foregroundStyle(Glass.text)
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .containerBackground(for: .widget) { Color.black.opacity(0.18) }
+        )
+        .overlay {
+            if entry.dayOffset != 0 {
+                Button(intent: ChangeDayIntent(delta: 0)) { Color.clear.contentShape(Rectangle()) }
+                    .buttonStyle(.plain)
+                    .padding(.horizontal, arrow + 6)
+            }
         }
     }
 
@@ -75,30 +112,40 @@ struct WidgetView: View {
             .containerBackground(for: .widget) { Glass.tile }
     }
 
-    // Mittel: Datum + aktuelles & nächstes Gebet
-    private func medium(_ s: PrayerState) -> some View {
+    // Mittel: Datum mit Pfeilen + aktuelles & nächstes Gebet (anderer Tag: alle 6 Zeiten)
+    private func medium(_ table: PrayerTable, _ s: PrayerState) -> some View {
         VStack(spacing: 8) {
-            DateHeader(date: entry.date)
-            HStack(spacing: 8) {
-                PrayerTile(kind: .current(endsAt: s.next.date), time: s.current)
-                PrayerTile(kind: .next, time: s.next)
+            header(table, dateSize: 14, hijriSize: 10, arrow: 24)
+            if entry.dayOffset == 0 {
+                HStack(spacing: 8) {
+                    PrayerTile(kind: .current(endsAt: s.next.date), time: s.current)
+                    PrayerTile(kind: .next, time: s.next)
+                }
+            } else {
+                DayGrid(times: table.times(for: shownDay))
             }
         }
         .padding(12)
         .containerBackground(for: .widget) { Color.black.opacity(0.18) }
     }
 
-    // Groß: Datum + beide Kacheln + alle Zeiten des Tages
-    private func large(_ s: PrayerState) -> some View {
+    // Groß: Datum mit Pfeilen + beide Kacheln + alle Zeiten des Tages
+    private func large(_ table: PrayerTable, _ s: PrayerState) -> some View {
         VStack(spacing: 10) {
-            DateHeader(date: entry.date, dateSize: 18, hijriSize: 12)
-            HStack(spacing: 10) {
-                PrayerTile(kind: .current(endsAt: s.next.date), time: s.current,
-                           nameSize: 17, timeSize: 34, labelSize: 9, footSize: 11, padding: 12, cornerRadius: 22)
-                PrayerTile(kind: .next, time: s.next,
-                           nameSize: 17, timeSize: 34, labelSize: 9, footSize: 11, padding: 12, cornerRadius: 22)
+            header(table, dateSize: 18, hijriSize: 12, arrow: 30)
+            if entry.dayOffset == 0 {
+                HStack(spacing: 10) {
+                    PrayerTile(kind: .current(endsAt: s.next.date), time: s.current,
+                               nameSize: 17, timeSize: 34, labelSize: 9, footSize: 11, padding: 12, cornerRadius: 22)
+                    PrayerTile(kind: .next, time: s.next,
+                               nameSize: 17, timeSize: 34, labelSize: 9, footSize: 11, padding: 12, cornerRadius: 22)
+                }
+                DayList(times: s.today, highlight: s.current)
+            } else {
+                Spacer(minLength: 0)
+                DayList(times: table.times(for: shownDay), fontSize: 19)
+                Spacer(minLength: 0)
             }
-            DayList(state: s)
         }
         .padding(16)
         .containerBackground(for: .widget) { Color.black.opacity(0.18) }
@@ -112,7 +159,6 @@ struct GebetszeitenWidget: Widget {
     var body: some WidgetConfiguration {
         StaticConfiguration(kind: "Gebetszeiten", provider: Provider()) { entry in
             WidgetView(entry: entry)
-                .widgetURL(PrayerStore.websiteURL)
         }
         .configurationDisplayName("Gebetszeiten")
         .description("Aktuelles und nächstes Gebet – Ahlu-s Sunnah Zentrum Salzgitter")

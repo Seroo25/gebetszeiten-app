@@ -11,23 +11,53 @@ enum Glass {
     static let faint = Color.white.opacity(0.55)
 }
 
-struct DateHeader: View {
-    let date: Date
+/// Kopfzeile: Datum + islamisches Datum, links/rechts Platz für Pfeile
+struct DateHeader<Leading: View, Trailing: View>: View {
+    let title: String
+    let subtitle: String
     var dateSize: CGFloat = 14
     var hijriSize: CGFloat = 10
+    @ViewBuilder var leading: Leading
+    @ViewBuilder var trailing: Trailing
 
     var body: some View {
-        VStack(spacing: 1) {
-            Text(DateText.header(date))
-                .font(.system(size: dateSize, weight: .bold, design: .rounded))
-                .foregroundStyle(Glass.text)
-            Text(DateText.hijri(date))
-                .font(.system(size: hijriSize, weight: .medium))
-                .foregroundStyle(Glass.sub)
+        HStack(spacing: 6) {
+            leading
+            VStack(spacing: 1) {
+                Text(title)
+                    .font(.system(size: dateSize, weight: .bold, design: .rounded))
+                    .foregroundStyle(Glass.text)
+                Text(subtitle)
+                    .font(.system(size: hijriSize, weight: .medium))
+                    .foregroundStyle(Glass.sub)
+            }
+            .lineLimit(1)
+            .minimumScaleFactor(0.6)
+            .frame(maxWidth: .infinity)
+            trailing
         }
-        .lineLimit(1)
-        .minimumScaleFactor(0.6)
-        .frame(maxWidth: .infinity)
+    }
+}
+
+extension DateHeader where Leading == EmptyView, Trailing == EmptyView {
+    init(title: String, subtitle: String, dateSize: CGFloat = 14, hijriSize: CGFloat = 10) {
+        self.init(title: title, subtitle: subtitle, dateSize: dateSize, hijriSize: hijriSize,
+                  leading: { EmptyView() }, trailing: { EmptyView() })
+    }
+}
+
+/// Runder Glas-Knopf mit Pfeil (wie auf der Website)
+struct ArrowLabel: View {
+    let forward: Bool
+    var size: CGFloat = 26
+
+    var body: some View {
+        Image(systemName: forward ? "chevron.right" : "chevron.left")
+            .font(.system(size: size * 0.42, weight: .bold))
+            .foregroundStyle(Glass.text)
+            .frame(width: size, height: size)
+            .background(Circle().fill(Glass.tile))
+            .contentShape(Circle())
     }
 }
 
@@ -93,13 +123,14 @@ struct PrayerTile: View {
 
 /// Alle Gebetszeiten des Tages, aktuelles hervorgehoben
 struct DayList: View {
-    let state: PrayerState
+    let times: [PrayerTime]
+    var highlight: PrayerTime? = nil
     var fontSize: CGFloat = 15
 
     var body: some View {
         VStack(spacing: 0) {
-            ForEach(state.today, id: \.self) { item in
-                let active = item == state.current
+            ForEach(times, id: \.self) { item in
+                let active = item == highlight
                 HStack {
                     Text(item.prayer.name)
                     Spacer()
@@ -118,5 +149,35 @@ struct DayList: View {
         }
         .padding(6)
         .background(RoundedRectangle(cornerRadius: 22, style: .continuous).fill(Glass.tile))
+    }
+}
+
+/// Kompakte Übersicht eines Tages (3 × 2) für das mittlere Widget
+struct DayGrid: View {
+    let times: [PrayerTime]
+
+    var body: some View {
+        let rows = stride(from: 0, to: times.count, by: 2).map { Array(times[$0..<min($0 + 2, times.count)]) }
+        VStack(spacing: 0) {
+            ForEach(rows.indices, id: \.self) { r in
+                HStack(spacing: 14) {
+                    ForEach(rows[r], id: \.self) { item in
+                        HStack {
+                            Text(item.prayer.name).foregroundStyle(Glass.sub)
+                            Spacer(minLength: 4)
+                            Text(DateText.time(item.date)).foregroundStyle(Glass.text)
+                        }
+                    }
+                }
+                .font(.system(size: 14, weight: .semibold, design: .rounded))
+                .frame(maxHeight: .infinity)
+            }
+        }
+        .lineLimit(1)
+        .minimumScaleFactor(0.7)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(Glass.tile))
     }
 }

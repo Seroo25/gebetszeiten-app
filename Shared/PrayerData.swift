@@ -114,6 +114,29 @@ struct PrayerTable {
         return PrayerState(current: today[idx], next: today[idx + 1], today: today)
     }
 
+    /// Tag `offset` Tage von `now` entfernt (12 Uhr, um Sommerzeit-Probleme zu vermeiden)
+    static func day(_ offset: Int, from now: Date) -> Date {
+        let cal = calendar
+        let noon = cal.date(bySettingHour: 12, minute: 0, second: 0, of: now) ?? now
+        return cal.date(byAdding: .day, value: offset, to: noon) ?? noon
+    }
+
+    /// Zweite Kopfzeile wie auf der Website: ab Maghrib bis Fajr "Nacht von …" (islamischer Tag beginnt mit Maghrib)
+    func hijriLine(for day: Date, now: Date) -> String {
+        let cal = Self.calendar
+        guard cal.isDate(day, inSameDayAs: now) else { return DateText.hijri(day, night: false) }
+        let t = times(for: now)
+        if t.count == 6 {
+            if now >= t[Prayer.maghrib.rawValue].date {
+                return DateText.hijri(Self.day(1, from: now), night: true)
+            }
+            if now < t[Prayer.fajr.rawValue].date {
+                return DateText.hijri(now, night: true)
+            }
+        }
+        return DateText.hijri(now, night: false)
+    }
+
     /// Alle Zeitpunkte, an denen sich die Anzeige ändert (Gebete + Mitternacht)
     func changePoints(from now: Date, days: Int) -> [Date] {
         let cal = Self.calendar
@@ -121,7 +144,7 @@ struct PrayerTable {
         for offset in 0...days {
             guard let day = cal.date(byAdding: .day, value: offset, to: now) else { continue }
             points.append(cal.startOfDay(for: day))
-            points.append(contentsOf: times(for: day).map(\.date))
+            points.append(contentsOf: times(for: day).map(\.date)) // inkl. Maghrib/Fajr für "Tag/Nacht von"
         }
         return points.filter { $0 > now }.sorted()
     }
@@ -189,12 +212,12 @@ enum DateText {
 
     static func header(_ date: Date) -> String { german(date, "EEEE, d. MMMM yyyy") }
 
-    static func hijri(_ date: Date) -> String {
+    static func hijri(_ date: Date, night: Bool) -> String {
         var cal = Calendar(identifier: .islamicUmmAlQura)
         cal.timeZone = .current
         let d = cal.date(byAdding: .day, value: hijriOffset, to: date) ?? date
         let c = cal.dateComponents([.day, .month, .year], from: d)
         let month = hijriMonths[max(0, min(11, (c.month ?? 1) - 1))]
-        return "Tag von \(c.day ?? 0). \(month) \(c.year ?? 0)"
+        return "\(night ? "Nacht" : "Tag") von \(c.day ?? 0). \(month) \(c.year ?? 0)"
     }
 }
