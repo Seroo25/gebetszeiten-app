@@ -1,8 +1,13 @@
 import SwiftUI
+import UserNotifications
 import WidgetKit
 
 @main
 struct GebetszeitenApp: App {
+    init() {
+        UNUserNotificationCenter.current().delegate = NotificationDelegate.shared
+    }
+
     var body: some Scene {
         WindowGroup {
             ContentView()
@@ -69,6 +74,8 @@ struct ContentView: View {
                                 .padding(.top, 40)
                         }
 
+                        NotificationSettingsView(table: table)
+
                         Button {
                             Task { await refresh(force: true) }
                         } label: {
@@ -118,5 +125,66 @@ struct ContentView: View {
         if let t = await PrayerStore.load(maxAge: force ? 0 : 6 * 3600) { table = t }
         loading = false
         WidgetCenter.shared.reloadAllTimelines()
+        await PrayerNotifications.reschedule(table: table) // Benachrichtigungen auffüllen
+    }
+}
+
+// MARK: - Einstellungen Benachrichtigungen
+
+struct NotificationSettingsView: View {
+    let table: PrayerTable?
+    @State private var enabled = PrayerNotifications.isEnabled
+    @State private var perPrayer: [Prayer: Bool] = Dictionary(
+        uniqueKeysWithValues: Prayer.allCases.map { ($0, PrayerNotifications.isOn($0)) })
+    @State private var denied = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Toggle(isOn: $enabled) {
+                Label("Benachrichtigungen", systemImage: "bell.fill")
+                    .font(.system(size: 16, weight: .semibold, design: .rounded))
+            }
+            .padding(.vertical, 10)
+
+            if enabled {
+                ForEach(Prayer.allCases, id: \.self) { prayer in
+                    Toggle(prayer.name, isOn: Binding(
+                        get: { perPrayer[prayer] ?? true },
+                        set: { perPrayer[prayer] = $0; PrayerNotifications.set(prayer, on: $0); update() }))
+                        .font(.system(size: 15, weight: .medium, design: .rounded))
+                        .foregroundStyle(Glass.sub)
+                        .padding(.vertical, 5)
+                }
+            }
+
+            if denied {
+                Text("Benachrichtigungen sind in den iOS-Einstellungen deaktiviert. Einstellungen → Gebetszeiten → Mitteilungen.")
+                    .font(.footnote)
+                    .foregroundStyle(Glass.faint)
+                    .padding(.vertical, 6)
+            }
+        }
+        .tint(Color.white.opacity(0.55))
+        .foregroundStyle(Glass.text)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 6)
+        .background(RoundedRectangle(cornerRadius: 22, style: .continuous).fill(Glass.tile))
+        .animation(.snappy, value: enabled)
+        .onChange(of: enabled) { _, on in
+            Task {
+                if on, !(await PrayerNotifications.requestPermission()) {
+                    denied = true
+                    enabled = false
+                    return
+                }
+                denied = false
+                PrayerNotifications.isEnabled = on
+                await PrayerNotifications.reschedule(table: table)
+            }
+        }
+    }
+
+    private func update() {
+        Task { await PrayerNotifications.reschedule(table: table) }
     }
 }
