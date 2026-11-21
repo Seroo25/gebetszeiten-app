@@ -1,0 +1,62 @@
+name: IPA bauen
+
+on:
+  push:
+    branches: ["**"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: XcodeGen installieren
+        run: brew install xcodegen
+
+      - name: Xcode-Projekt erzeugen
+        run: xcodegen generate
+
+      - name: Xcode-Version
+        run: xcodebuild -version
+
+      - name: App bauen (unsigniert, AltStore signiert selbst)
+        run: |
+          xcodebuild archive \
+            -project Gebetszeiten.xcodeproj \
+            -scheme Gebetszeiten \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -archivePath build/Gebetszeiten.xcarchive \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            | tee build.log | grep -E "error:|warning: .*deprecated|\*\* ARCHIVE" || true
+          test -d build/Gebetszeiten.xcarchive/Products/Applications/Gebetszeiten.app || (tail -80 build.log; exit 1)
+
+      - name: IPA packen
+        run: |
+          mkdir -p Payload
+          cp -R build/Gebetszeiten.xcarchive/Products/Applications/Gebetszeiten.app Payload/
+          ls Payload/Gebetszeiten.app/PlugIns
+          zip -qry Gebetszeiten.ipa Payload
+
+      - name: Als Artefakt hochladen
+        uses: actions/upload-artifact@v4
+        with:
+          name: Gebetszeiten-ipa
+          path: Gebetszeiten.ipa
+
+      - name: Als Release "latest" veröffentlichen (Download direkt am iPhone)
+        if: github.ref_name == github.event.repository.default_branch
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest
+          name: Gebetszeiten (neueste Version)
+          body: "Automatisch gebaut aus ${{ github.sha }}. Gebetszeiten.ipa herunterladen und mit AltStore installieren."
+          files: Gebetszeiten.ipa
+          make_latest: true
