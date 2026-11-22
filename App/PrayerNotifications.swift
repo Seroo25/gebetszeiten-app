@@ -65,7 +65,7 @@ enum PrayerNotifications {
 
     static func content(for item: PrayerTime, next: PrayerTime?) -> UNMutableNotificationContent {
         let c = UNMutableNotificationContent()
-        c.title = "\(item.prayer.name) · \(DateText.time(item.date)) Uhr"
+        c.title = "\(item.prayer.name) hat begonnen"
         c.body = body(for: item, next: next)
         c.sound = .default
         c.threadIdentifier = "gebetszeiten"
