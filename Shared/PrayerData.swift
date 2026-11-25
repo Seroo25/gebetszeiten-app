@@ -5,8 +5,12 @@ import Foundation
 enum Prayer: Int, CaseIterable {
     case fajr, sunrise, dhuhr, asr, maghrib, isha
 
-    var name: String {
-        ["Fajr", "Shurûq", "Dhuhr", "^Asr", "Maghrib", "^Ishâ"][rawValue]
+    func name(_ lang: AppLanguage) -> String {
+        switch lang {
+        case .de: return ["Fajr", "Shurûq", "Dhuhr", "^Asr", "Maghrib", "^Ishâ"][rawValue]
+        case .tr: return ["Sabah", "Güneş", "Öğle", "İkindi", "Akşam", "Yatsı"][rawValue]
+        case .ar: return ["الفجر", "الشروق", "الظهر", "العصر", "المغرب", "العشاء"][rawValue]
+        }
     }
 }
 
@@ -122,19 +126,19 @@ struct PrayerTable {
     }
 
     /// Zweite Kopfzeile wie auf der Website: ab Maghrib bis Fajr "Nacht von …" (islamischer Tag beginnt mit Maghrib)
-    func hijriLine(for day: Date, now: Date) -> String {
+    func hijriLine(for day: Date, now: Date, lang: AppLanguage) -> String {
         let cal = Self.calendar
-        guard cal.isDate(day, inSameDayAs: now) else { return DateText.hijri(day, night: false) }
+        guard cal.isDate(day, inSameDayAs: now) else { return DateText.hijri(day, night: false, lang) }
         let t = times(for: now)
         if t.count == 6 {
             if now >= t[Prayer.maghrib.rawValue].date {
-                return DateText.hijri(Self.day(1, from: now), night: true)
+                return DateText.hijri(Self.day(1, from: now), night: true, lang)
             }
             if now < t[Prayer.fajr.rawValue].date {
-                return DateText.hijri(now, night: true)
+                return DateText.hijri(now, night: true, lang)
             }
         }
-        return DateText.hijri(now, night: false)
+        return DateText.hijri(now, night: false, lang)
     }
 
     /// Alle Zeitpunkte, an denen sich die Anzeige ändert (Gebete + Mitternacht)
@@ -195,29 +199,56 @@ enum PrayerStore {
 enum DateText {
     static let hijriOffset = 0 // ±1, falls die Moschee abweicht
 
-    private static let hijriMonths = [
-        "Muharram", "Safar", "Rabî^ al-Awwal", "Rabî^ ath-Thânî", "Jumâdâ al-Ûlâ", "Jumâdâ al-Âkhira",
-        "Rajab", "Sha^bân", "Ramadân", "Shawwâl", "Dhû l-Qa^da", "Dhû l-Hijja",
-    ]
+    private static func hijriMonths(_ lang: AppLanguage) -> [String] {
+        switch lang {
+        case .de: return ["Muharram", "Safar", "Rabî^ al-Awwal", "Rabî^ ath-Thânî", "Jumâdâ al-Ûlâ", "Jumâdâ al-Âkhira",
+                          "Rajab", "Sha^bân", "Ramadân", "Shawwâl", "Dhû l-Qa^da", "Dhû l-Hijja"]
+        case .tr: return ["Muharrem", "Safer", "Rebiülevvel", "Rebiülahir", "Cemaziyelevvel", "Cemaziyelahir",
+                          "Recep", "Şaban", "Ramazan", "Şevval", "Zilkade", "Zilhicce"]
+        case .ar: return ["محرم", "صفر", "ربيع الأول", "ربيع الآخر", "جمادى الأولى", "جمادى الآخرة",
+                          "رجب", "شعبان", "رمضان", "شوال", "ذو القعدة", "ذو الحجة"]
+        }
+    }
 
-    static func german(_ date: Date, _ format: String) -> String {
+    private static func formatter(_ lang: AppLanguage) -> DateFormatter {
         let f = DateFormatter()
-        f.locale = Locale(identifier: "de_DE")
+        f.calendar = Calendar(identifier: .gregorian)
+        f.locale = lang.locale
         f.timeZone = .current
-        f.dateFormat = format
+        return f
+    }
+
+    /// "16:23" (Arabisch: "١٦:٢٣")
+    static func time(_ date: Date, _ lang: AppLanguage) -> String {
+        let f = formatter(lang)
+        f.dateFormat = "HH:mm"
         return f.string(from: date)
     }
 
-    static func time(_ date: Date) -> String { german(date, "HH:mm") }
+    /// "Samstag, 21. November 2026" · "21 Kasım 2026 Cumartesi" · "السبت، ٢١ نوفمبر ٢٠٢٦"
+    static func header(_ date: Date, _ lang: AppLanguage) -> String {
+        let f = formatter(lang)
+        if lang == .de {
+            f.dateFormat = "EEEE, d. MMMM yyyy"
+        } else {
+            f.setLocalizedDateFormatFromTemplate("EEEEdMMMMyyyy")
+        }
+        return f.string(from: date)
+    }
 
-    static func header(_ date: Date) -> String { german(date, "EEEE, d. MMMM yyyy") }
-
-    static func hijri(_ date: Date, night: Bool) -> String {
+    /// "Tag von 10. Jumâdâ al-Âkhira 1448" · "10 Cemaziyelahir 1448 günü" · "يوم ١٠ جمادى الآخرة ١٤٤٨ هـ"
+    static func hijri(_ date: Date, night: Bool, _ lang: AppLanguage) -> String {
         var cal = Calendar(identifier: .islamicUmmAlQura)
         cal.timeZone = .current
         let d = cal.date(byAdding: .day, value: hijriOffset, to: date) ?? date
         let c = cal.dateComponents([.day, .month, .year], from: d)
-        let month = hijriMonths[max(0, min(11, (c.month ?? 1) - 1))]
-        return "\(night ? "Nacht" : "Tag") von \(c.day ?? 0). \(month) \(c.year ?? 0)"
+        let month = hijriMonths(lang)[max(0, min(11, (c.month ?? 1) - 1))]
+        let day = lang.number(c.day ?? 0)
+        let year = lang.number(c.year ?? 0)
+        switch lang {
+        case .de: return "\(night ? "Nacht" : "Tag") von \(day). \(month) \(year)"
+        case .tr: return "\(day) \(month) \(year) \(night ? "gecesi" : "günü")"
+        case .ar: return "\(night ? "ليلة" : "يوم") \(day) \(month) \(year) هـ"
+        }
     }
 }

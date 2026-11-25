@@ -46,18 +46,32 @@ extension DateHeader where Leading == EmptyView, Trailing == EmptyView {
     }
 }
 
-/// Runder Glas-Knopf mit Pfeil (wie auf der Website)
+/// Runder Glas-Knopf mit Symbol (Globus, Zahnrad, Pfeile)
+struct GlassIcon: View {
+    let systemName: String
+    var size: CGFloat = 40
+    var weight: Font.Weight = .semibold
+    var scale: CGFloat = 0.45
+
+    var body: some View {
+        Image(systemName: systemName)
+            .font(.system(size: size * scale, weight: weight))
+            .foregroundStyle(Glass.text)
+            .frame(width: size, height: size)
+            .background(Circle().fill(Glass.tile))
+            .contentShape(Circle())
+    }
+}
+
+/// Pfeil zum Tageswechsel (wie auf der Website).
+/// "backward/forward" spiegeln sich bei Arabisch automatisch.
 struct ArrowLabel: View {
     let forward: Bool
     var size: CGFloat = 26
 
     var body: some View {
-        Image(systemName: forward ? "chevron.right" : "chevron.left")
-            .font(.system(size: size * 0.42, weight: .bold))
-            .foregroundStyle(Glass.text)
-            .frame(width: size, height: size)
-            .background(Circle().fill(Glass.tile))
-            .contentShape(Circle())
+        GlassIcon(systemName: forward ? "chevron.forward" : "chevron.backward",
+                  size: size, weight: .bold, scale: 0.42)
     }
 }
 
@@ -74,6 +88,7 @@ struct PrayerTile: View {
     var padding: CGFloat = 10
     var cornerRadius: CGFloat = 14
     var showBackground = true
+    @Environment(\.appLanguage) var lang
 
     private var isCurrent: Bool {
         if case .current = kind { return true }
@@ -82,14 +97,18 @@ struct PrayerTile: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Text(isCurrent ? "AKTUELLES GEBET" : "NÄCHSTES GEBET")
+            Text(isCurrent
+                 ? lang.t("AKTUELLES GEBET", "ŞİMDİKİ VAKİT", "الصلاة الحالية")
+                 : lang.t("NÄCHSTES GEBET", "SONRAKİ VAKİT", "الصلاة القادمة"))
                 .font(.system(size: labelSize, weight: .semibold))
                 .foregroundStyle(isCurrent ? Glass.sub : Glass.faint)
+                .minimumScaleFactor(0.7)
             Spacer(minLength: 2)
-            Text(time.prayer.name)
+            Text(time.prayer.name(lang))
                 .font(.system(size: nameSize, weight: .semibold, design: .rounded))
                 .foregroundStyle(Glass.text)
-            Text(DateText.time(time.date))
+                .minimumScaleFactor(0.7)
+            Text(DateText.time(time.date, lang))
                 .font(.system(size: timeSize, weight: .bold, design: .rounded))
                 .foregroundStyle(Glass.text)
                 .minimumScaleFactor(0.6)
@@ -112,11 +131,18 @@ struct PrayerTile: View {
     @ViewBuilder private var footer: some View {
         switch kind {
         case .current(let endsAt):
-            Text("Endet · \(DateText.time(endsAt)) Uhr")
+            let end = DateText.time(endsAt, lang)
+            Text(lang.t("Endet · \(end) Uhr", "Bitiş · \(end)", "ينتهي · \(end)"))
         case .next:
             // Live-Countdown, von iOS selbst hochgezählt: "in 1 Std., 24 Min."
-            Text("in \(time.date, style: .relative)")
-                .minimumScaleFactor(0.6)
+            Group {
+                switch lang {
+                case .de: Text("in \(time.date, style: .relative)")
+                case .tr: Text("\(time.date, style: .relative) sonra")
+                case .ar: Text("بعد \(time.date, style: .relative)")
+                }
+            }
+            .minimumScaleFactor(0.6)
         }
     }
 }
@@ -126,15 +152,16 @@ struct DayList: View {
     let times: [PrayerTime]
     var highlight: PrayerTime? = nil
     var fontSize: CGFloat = 15
+    @Environment(\.appLanguage) var lang
 
     var body: some View {
         VStack(spacing: 0) {
             ForEach(times, id: \.self) { item in
                 let active = item == highlight
                 HStack {
-                    Text(item.prayer.name)
+                    Text(item.prayer.name(lang))
                     Spacer()
-                    Text(DateText.time(item.date))
+                    Text(DateText.time(item.date, lang))
                 }
                 .font(.system(size: fontSize, weight: active ? .semibold : .medium, design: .rounded))
                 .foregroundStyle(active ? Glass.text : Glass.sub)
@@ -155,6 +182,7 @@ struct DayList: View {
 /// Kompakte Übersicht eines Tages (3 × 2) für das mittlere Widget
 struct DayGrid: View {
     let times: [PrayerTime]
+    @Environment(\.appLanguage) var lang
 
     var body: some View {
         let rows = stride(from: 0, to: times.count, by: 2).map { Array(times[$0..<min($0 + 2, times.count)]) }
@@ -163,9 +191,9 @@ struct DayGrid: View {
                 HStack(spacing: 14) {
                     ForEach(rows[r], id: \.self) { item in
                         HStack {
-                            Text(item.prayer.name).foregroundStyle(Glass.sub)
+                            Text(item.prayer.name(lang)).foregroundStyle(Glass.sub)
                             Spacer(minLength: 4)
-                            Text(DateText.time(item.date)).foregroundStyle(Glass.text)
+                            Text(DateText.time(item.date, lang)).foregroundStyle(Glass.text)
                         }
                     }
                 }

@@ -1,6 +1,8 @@
 # Gebetszeiten – Ahlu-s Sunnah Zentrum Salzgitter
 
 iOS-App mit Homescreen-Widget (klein, mittel, groß) im Liquid-Glass-Stil.
+Sprachen: Deutsch, Türkçe, العربية (Globus oben links in der App; im Widget über „Widget bearbeiten“).
+Benachrichtigungen zu jedem Gebet (Zahnrad oben rechts → Benachrichtigungen).
 Die Zeiten kommen direkt aus der Gebetszeiten-App von [islamsalzgitter.de](https://www.islamsalzgitter.de/gebetszeiten/).
 
 **Vorteil gegenüber dem Scriptable-Widget:** Das Widget übergibt iOS alle Wechsel (Mitternacht und jedes Gebet) im Voraus.

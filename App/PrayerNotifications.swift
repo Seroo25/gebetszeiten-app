@@ -39,7 +39,7 @@ enum PrayerNotifications {
 
     // MARK: Planen
 
-    static func reschedule(table: PrayerTable?, now: Date = Date()) async {
+    static func reschedule(table: PrayerTable?, lang: AppLanguage = AppLanguage.stored, now: Date = Date()) async {
         center.removeAllPendingNotificationRequests()
         guard isEnabled, let table, await isAuthorized() else { return }
 
@@ -52,7 +52,7 @@ enum PrayerNotifications {
             let next = all.dropFirst(i + 1).first
             let request = UNNotificationRequest(
                 identifier: "prayer-\(Int(item.date.timeIntervalSince1970))",
-                content: content(for: item, next: next),
+                content: content(for: item, next: next, lang: lang),
                 trigger: UNCalendarNotificationTrigger(
                     dateMatching: Calendar.current.dateComponents([.year, .month, .day, .hour, .minute], from: item.date),
                     repeats: false))
@@ -61,29 +61,47 @@ enum PrayerNotifications {
         }
     }
 
-    // MARK: Text der Benachrichtigung
+    // MARK: Text der Benachrichtigung (Deutsch, Türkisch, Arabisch)
 
-    static func content(for item: PrayerTime, next: PrayerTime?) -> UNMutableNotificationContent {
+    static func content(for item: PrayerTime, next: PrayerTime?, lang: AppLanguage) -> UNMutableNotificationContent {
         let c = UNMutableNotificationContent()
-        c.title = "\(item.prayer.name) hat begonnen"
-        c.body = body(for: item, next: next)
+        c.title = title(for: item, lang: lang)
+        c.body = body(for: item, next: next, lang: lang)
         c.sound = .default
         c.threadIdentifier = "gebetszeiten"
         return c
     }
 
-    static func body(for item: PrayerTime, next: PrayerTime?) -> String {
-        let nextTime = next.map { DateText.time($0.date) } ?? ""
+    /// "^Asr hat begonnen" · "İkindi vakti girdi" · "دخل وقت العصر"
+    static func title(for item: PrayerTime, lang: AppLanguage) -> String {
+        let name = item.prayer.name(lang)
+        if item.prayer == .sunrise {
+            return lang.t("\(name) hat begonnen", "Güneş doğdu", "أشرقت الشمس")
+        }
+        return lang.t("\(name) hat begonnen", "\(name) vakti girdi", "دخل وقت \(name)")
+    }
+
+    static func body(for item: PrayerTime, next: PrayerTime?, lang: AppLanguage) -> String {
+        let name = item.prayer.name(lang)
+        let nextName = next?.prayer.name(lang) ?? ""
+        let nextTime = next.map { DateText.time($0.date, lang) } ?? ""
         switch item.prayer {
         case .fajr:
-            return "Es ist Zeit für das Fajr-Gebet. Sonnenaufgang um \(nextTime) Uhr."
+            return lang.t("Es ist Zeit für das Fajr-Gebet. Sonnenaufgang um \(nextTime) Uhr.",
+                          "Sabah namazı vakti. Güneş doğuşu: \(nextTime).",
+                          "حان وقت صلاة الفجر. الشروق الساعة \(nextTime).")
         case .sunrise:
-            return "Sonnenaufgang – die Zeit für Fajr ist vorbei."
+            return lang.t("Sonnenaufgang – die Zeit für Fajr ist vorbei.",
+                          "Sabah namazının vakti çıktı.",
+                          "انتهى وقت صلاة الفجر.")
         case .isha:
-            return "Es ist Zeit für das ^Ishâ-Gebet. Fajr morgen um \(nextTime) Uhr."
+            return lang.t("Es ist Zeit für das ^Ishâ-Gebet. Fajr morgen um \(nextTime) Uhr.",
+                          "Yatsı namazı vakti. Yarın sabah namazı: \(nextTime).",
+                          "حان وقت صلاة العشاء. الفجر غداً الساعة \(nextTime).")
         default:
-            let name = next?.prayer.name ?? ""
-            return "Es ist Zeit für das \(item.prayer.name)-Gebet. Nächstes Gebet: \(name) um \(nextTime) Uhr."
+            return lang.t("Es ist Zeit für das \(name)-Gebet. Nächstes Gebet: \(nextName) um \(nextTime) Uhr.",
+                          "\(name) namazı vakti. Sonraki vakit: \(nextName) \(nextTime).",
+                          "حان وقت صلاة \(name). الصلاة القادمة: \(nextName) الساعة \(nextTime).")
         }
     }
 }

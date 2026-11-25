@@ -2,6 +2,39 @@ import AppIntents
 import SwiftUI
 import WidgetKit
 
+// MARK: - Sprache des Widgets (Widget lang drücken → „Widget bearbeiten“)
+// Ohne App-Group kann das Widget die Sprache der App nicht lesen, daher eine eigene Einstellung.
+// "Automatisch" = Sprache des iPhones (Türkisch/Arabisch, sonst Deutsch).
+
+enum WidgetLanguage: String, AppEnum, CaseIterable {
+    case automatic, de, tr, ar
+
+    static var typeDisplayRepresentation: TypeDisplayRepresentation = "Sprache · Dil · اللغة"
+    static var caseDisplayRepresentations: [WidgetLanguage: DisplayRepresentation] = [
+        .automatic: "Automatisch · Otomatik · تلقائي",
+        .de: "Deutsch",
+        .tr: "Türkçe",
+        .ar: "العربية",
+    ]
+
+    var resolved: AppLanguage {
+        switch self {
+        case .automatic: return .device
+        case .de: return .de
+        case .tr: return .tr
+        case .ar: return .ar
+        }
+    }
+}
+
+struct WidgetSettingsIntent: WidgetConfigurationIntent {
+    static var title: LocalizedStringResource = "Gebetszeiten"
+    static var description = IntentDescription("Sprache des Widgets · Widget dili · لغة الأداة")
+
+    @Parameter(title: "Sprache · Dil · اللغة", default: .automatic)
+    var language: WidgetLanguage
+}
+
 // MARK: - Timeline
 // Alle Wechsel (Mitternacht, jedes Gebet) werden iOS im Voraus übergeben.
 // iOS springt dann minutengenau um – ohne Neuladen.
@@ -10,41 +43,38 @@ struct PrayerEntry: TimelineEntry {
     let date: Date
     let table: PrayerTable?
     var dayOffset: Int = 0
+    var lang: AppLanguage = .device
 }
 
-struct Provider: TimelineProvider {
+struct Provider: AppIntentTimelineProvider {
     func placeholder(in context: Context) -> PrayerEntry {
         PrayerEntry(date: Date(), table: PrayerStore.cached())
     }
 
-    func getSnapshot(in context: Context, completion: @escaping (PrayerEntry) -> Void) {
-        Task {
-            let table = await PrayerStore.load()
-            completion(PrayerEntry(date: Date(), table: table))
-        }
+    func snapshot(for configuration: WidgetSettingsIntent, in context: Context) async -> PrayerEntry {
+        let table = await PrayerStore.load()
+        return PrayerEntry(date: Date(), table: table, lang: configuration.language.resolved)
     }
 
-    func getTimeline(in context: Context, completion: @escaping (Timeline<PrayerEntry>) -> Void) {
-        Task {
-            let now = Date()
-            guard let table = await PrayerStore.load() else {
-                let entry = PrayerEntry(date: now, table: nil)
-                completion(Timeline(entries: [entry], policy: .after(now.addingTimeInterval(15 * 60))))
-                return
-            }
-
-            var entries: [PrayerEntry] = []
-            var start = now
-            let offset = DayOffsetStore.current(now: now)
-            if offset != 0 {
-                // anderer Tag ausgewählt → kurz anzeigen, dann automatisch zurück auf heute
-                entries.append(PrayerEntry(date: now, table: table, dayOffset: offset))
-                start = DayOffsetStore.setAt.addingTimeInterval(DayOffsetStore.resetAfter)
-            }
-            let points = [start] + table.changePoints(from: start, days: 2)
-            entries += points.map { PrayerEntry(date: $0, table: table) }
-            completion(Timeline(entries: entries, policy: .after(now.addingTimeInterval(4 * 3600))))
+    func timeline(for configuration: WidgetSettingsIntent, in context: Context) async -> Timeline<PrayerEntry> {
+        let now = Date()
+        let lang = configuration.language.resolved
+        guard let table = await PrayerStore.load() else {
+            let entry = PrayerEntry(date: now, table: nil, lang: lang)
+            return Timeline(entries: [entry], policy: .after(now.addingTimeInterval(15 * 60)))
         }
+
+        var entries: [PrayerEntry] = []
+        var start = now
+        let offset = DayOffsetStore.current(now: now)
+        if offset != 0 {
+            // anderer Tag ausgewählt → kurz anzeigen, dann automatisch zurück auf heute
+            entries.append(PrayerEntry(date: now, table: table, dayOffset: offset, lang: lang))
+            start = DayOffsetStore.setAt.addingTimeInterval(DayOffsetStore.resetAfter)
+        }
+        let points = [start] + table.changePoints(from: start, days: 2)
+        entries += points.map { PrayerEntry(date: $0, table: table, lang: lang) }
+        return Timeline(entries: entries, policy: .after(now.addingTimeInterval(4 * 3600)))
     }
 }
 
@@ -54,6 +84,7 @@ struct WidgetView: View {
     @Environment(\.widgetFamily) private var family
     let entry: PrayerEntry
 
+    private var lang: AppLanguage { entry.lang }
     private var shownDay: Date { PrayerTable.day(entry.dayOffset, from: entry.date) }
 
     var body: some View {
@@ -66,9 +97,9 @@ struct WidgetView: View {
                 }
             } else {
                 VStack(spacing: 4) {
-                    Text("Gebetszeiten")
+                    Text(lang.t("Gebetszeiten", "Namaz Vakitleri", "أوقات الصلاة"))
                         .font(.system(size: 15, weight: .semibold, design: .rounded))
-                    Text("Daten gerade nicht erreichbar")
+                    Text(lang.t("Daten gerade nicht erreichbar", "Veriler şu anda alınamıyor", "البيانات غير متاحة حالياً"))
                         .font(.system(size: 11, weight: .medium))
                         .foregroundStyle(Glass.sub)
                 }
@@ -77,14 +108,14 @@ struct WidgetView: View {
                 .containerBackground(for: .widget) { Color.black.opacity(0.18) }
             }
         }
-        .environment(\.locale, Locale(identifier: "de_DE"))
+        .appLanguage(lang)
     }
 
     /// Kopfzeile mit Pfeilen; Tippen auf das Datum springt zurück auf heute
     private func header(_ table: PrayerTable, dateSize: CGFloat, hijriSize: CGFloat, arrow: CGFloat) -> some View {
         DateHeader(
-            title: DateText.header(shownDay),
-            subtitle: table.hijriLine(for: shownDay, now: entry.date),
+            title: DateText.header(shownDay, lang),
+            subtitle: table.hijriLine(for: shownDay, now: entry.date, lang: lang),
             dateSize: dateSize, hijriSize: hijriSize,
             leading: {
                 Button(intent: ChangeDayIntent(delta: -1)) { ArrowLabel(forward: false, size: arrow) }
@@ -157,7 +188,7 @@ struct WidgetView: View {
 @main
 struct GebetszeitenWidget: Widget {
     var body: some WidgetConfiguration {
-        StaticConfiguration(kind: "Gebetszeiten", provider: Provider()) { entry in
+        AppIntentConfiguration(kind: "Gebetszeiten", intent: WidgetSettingsIntent.self, provider: Provider()) { entry in
             WidgetView(entry: entry)
         }
         .configurationDisplayName("Gebetszeiten")
